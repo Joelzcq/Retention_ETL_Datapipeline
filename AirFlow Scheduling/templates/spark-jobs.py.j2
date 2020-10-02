@@ -1,0 +1,119 @@
+import base64
+import json
+import os
+from datetime import datetime, timedelta
+from time import time
+from airflow import DAG
+from airflow.utils import trigger_rule
+from airflow.operators import PythonOperator
+from airflow.contrib.operators.dataproc_operator import DataprocClusterCreateOperator, DataProcSparkOperator, DataprocClusterDeleteOperator
+from airflow.contrib.sensors.gcs_sensor import GoogleCloudStorageObjectSensor
+
+dag_name = '{{ dag_name }}'.strip()
+
+def push_cluster_name(**kwargs):
+    ti = kwargs['ti']
+    cluster_name = dag_name[:27] + '-' + str(int(round(time() * 100)))
+    ti.xcom_push(key='cluster_name', value=cluster_name)
+
+with DAG(dag_id=dag_name,
+         schedule_interval='{{ schedule_interval }}',
+         start_date=datetime.strptime('{{ start_date }}', "%Y-%m-%d %H:%M:%S"),
+         {% if end_date %}
+         end_date=datetime.strptime('{{ end_date }}', "%Y-%m-%d %H:%M:%S"),
+         {% endif %}
+         max_active_runs=1,
+         concurrency={{ concurrency }},
+         default_args={
+            'project_id': 'sinuous-set-242504',
+            'email': 'test@gmail.com',
+            'email_on_failure': True,
+            'email_on_retry': False
+         }) as dag:
+
+    push_cluster_name = PythonOperator(dag=dag, task_id="push-cluster-name", provide_context=True, python_callable=push_cluster_name)
+
+    {% for dataproc in list_of_dataprocs %}
+    {{ dataproc.creation_operator_name }} = DataprocClusterCreateOperator(
+        task_id='{{ dataproc.creation_operator_name }}',
+        project_id='sinuous-set-242504',
+        cluster_name='{% raw %}{{ ti.xcom_pull(key="cluster_name", task_ids="push-cluster-name") }}{% endraw %}' + '{{ dataproc.id }}',
+        region='us-west1',
+        master_machine_type='{{ dataproc.master_machine_type }}',
+        worker_machine_type='{{ dataproc.worker_machine_type }}',
+        num_workers={{ dataproc.num_workers }},
+        execution_timeout=timedelta(minutes=30))
+
+    {{ dataproc.creation_operator_name }}.set_upstream(push_cluster_name)
+
+    {{ dataproc.deletion_operator_name }} = DataprocClusterDeleteOperator(
+        task_id='{{ dataproc.deletion_operator_name }}',
+        project_id='sinuous-set-242504',
+        cluster_name='{% raw %}{{ ti.xcom_pull(key="cluster_name", task_ids="push-cluster-name") }}{% endraw %}' + '{{ dataproc.id }}',
+        region='us-west1',
+        execution_timeout=timedelta(minutes=30),
+        trigger_rule=trigger_rule.TriggerRule.ALL_DONE)
+    {% endfor %}
+
+    {% for job in list_of_jobs %}
+    args = {{ job.args }}
+    {{ job.name }} = DataProcSparkOperator(
+        task_id='{{ job.name }}',
+        dataproc_spark_jars=['{{ job.jar }}'],
+        main_class='{{ job.main_class }}',
+        region='us-west1',
+        job_name=dag_name + '{{ job.name }}',
+        cluster_name='{% raw %}{{ ti.xcom_pull(key="cluster_name", task_ids="push-cluster-name") }}{% endraw %}' + '{{ job.dataproc_id }}',
+        execution_timeout= {{ job.timeout }},
+        arguments=args
+    )
+    {% endfor %}
+
+    {% if list_of_gcs_sensors %}
+    {% for sensor in list_of_gcs_sensors %}
+    {{ sensor.name }} = GoogleCloudStorageObjectSensor(
+        task_id='{{ sensor.name }}',
+        bucket='{{ sensor.bucket }}',
+        object='{{ sensor.file_path }}',
+        poke_interval={% if sensor.poke_interval %}{{sensor.poke_interval}}{% else %}30{% endif %},
+        timeout={% if sensor.timeout %}{{sensor.timeout}}{% else %}1800{% endif %}
+    )
+    {% endfor %}
+    {% endif %}
+
+    {% for job in list_of_jobs %}
+      {% if job.up_streams %}
+        {% for up_stream in job.up_streams %}
+    {{ job.name }}.set_upstream({{ up_stream }})
+        {% endfor %}
+      {% endif %}
+
+      {% if job.down_streams %}
+        {% for down_stream in job.down_streams %}
+    {{ job.name }}.set_downstream({{ down_stream }})
+        {% endfor %}
+      {% endif %}
+    {% endfor %}
+
+    {% for dataproc in list_of_dataprocs %}
+      {% if dataproc.creation_up_streams %}
+        {% for up_stream in dataproc.creation_up_streams %}
+    {{ dataproc.creation_operator_name }}.set_upstream({{ up_stream }})
+        {% endfor %}
+      {% endif %}
+      {% if dataproc.creation_down_stream %}
+        {% for down_stream in dataproc.creation_down_streams %}
+    {{ dataproc.creation_operator_name }}.set_downstream({{ down_stream }})
+        {% endfor %}
+      {% endif %}
+      {% if dataproc.deletion_up_streams %}
+        {% for up_stream in dataproc.deletion_up_streams %}
+    {{ dataproc.deletion_operator_name }}.set_upstream({{ up_stream }})
+        {% endfor %}
+      {% endif %}
+      {% if dataproc.deletion_down_streams %}
+        {% for down_stream in dataproc.deletion_down_streams %}
+    {{ dataproc.deletion_operator_name }}.set_downstream({{ down_stream }})
+        {% endfor %}
+      {% endif %}
+    {% endfor %}

@@ -1,0 +1,187 @@
+---
+-
+  dag_name: bike-share-anaylze-v1
+  concurrency: 10
+  max_active_runs: 1
+  email: test@gmail.com
+  template: spark-jobs.py.j2
+  schedule_interval: "@daily"
+  start_date: 2014-01-14 00:00:00 +00:00
+  list_of_dataprocs:
+    - id: 1
+      master_machine_type: n1-standard-2
+      worker_machine_type: n1-standard-2
+      num_workers: 2
+      creation_operator_name: dataproc_create_cluster_1
+      deletion_operator_name: dataproc_destroy_cluster_1
+      creation_up_streams: [unique_user_sensor]
+    - id: 2
+      master_machine_type: n1-standard-2
+      worker_machine_type: n1-standard-2
+      num_workers: 2
+      creation_operator_name: dataproc_create_cluster_2
+      deletion_operator_name: dataproc_destroy_cluster_2
+      creation_up_streams: [dataproc_destroy_cluster_1]
+    - id: 3
+      master_machine_type: n1-standard-2
+      worker_machine_type: n1-standard-2
+      num_workers: 2
+      s3_access_enabled: true
+      yarn_dominant_resource_calculator: true
+      creation_operator_name: dataproc_create_cluster_3
+      deletion_operator_name: dataproc_destroy_cluster_3
+      creation_up_streams: [dataproc_destroy_cluster_1]
+    - id: 4
+      master_machine_type: n1-standard-2
+      worker_machine_type: n1-standard-2
+      num_workers: 2
+      creation_operator_name: dataproc_create_cluster_4
+      deletion_operator_name: dataproc_destroy_cluster_4
+      creation_up_streams: [dataproc_destroy_cluster_1]
+  list_of_jobs:
+    - name: unique_user
+      timeout: timedelta(minutes=180)
+      main_class: com.cohort.process.UserProcess
+      jar: gs://jiuzhangsuanfa/jar/CohortProject-assembly-0.1.jar
+      dataproc_id: 1
+      args: |
+        ["--process.date", "{{ (execution_date).strftime('%Y-%m-%d') }}"]
+      up_streams: [dataproc_create_cluster_1]
+      down_streams: [bike_share_aggregator]
+    - name: bike_share_aggregator
+      timeout: timedelta(minutes=120)
+      main_class: com.cohort.process.BikeShareProcess
+      jar: gs://jiuzhangsuanfa/jar/CohortProject-assembly-0.1.jar
+      dataproc_id: 1
+      args: |
+        ["--process.date", "{{ (execution_date).strftime('%Y-%m-%d') }}"]
+      down_streams: [dataproc_destroy_cluster_1]
+    - name: bike_share_retention_d1
+      timeout: timedelta(minutes=180)
+      dataproc_id: 2
+      main_class: com.cohort.process.RetentionProcess
+      jar: gs://jiuzhangsuanfa/jar/CohortProject-assembly-0.1.jar
+      args: |
+        ["--process.date", "{{ (execution_date).strftime('%Y-%m-%d') }}",
+         "--day.ago", "1"]
+      up_streams: [dataproc_create_cluster_2]
+      down_streams: [dataproc_destroy_cluster_2]
+    - name: bike_share_retention_d3
+      timeout: timedelta(minutes=180)
+      dataproc_id: 3
+      main_class: com.cohort.process.RetentionProcess
+      jar: gs://jiuzhangsuanfa/jar/CohortProject-assembly-0.1.jar
+      args: |
+        ["--process.date", "{{ (execution_date).strftime('%Y-%m-%d') }}",
+         "--day.ago", "3"]
+      up_streams: [dataproc_create_cluster_3]
+      down_streams: [dataproc_destroy_cluster_3]
+    - name: bike_share_retention_d7
+      timeout: timedelta(minutes=180)
+      dataproc_id: 4
+      main_class: com.cohort.process.RetentionProcess
+      jar: gs://jiuzhangsuanfa/jar/CohortProject-assembly-0.1.jar
+      args: |
+        ["--process.date", "{{ (execution_date).strftime('%Y-%m-%d') }}",
+         "--day.ago", "7"]
+      up_streams: [dataproc_create_cluster_4]
+      down_streams: [dataproc_destroy_cluster_4]
+  list_of_gcs_sensors:
+    - name: unique_user_sensor
+      bucket: jiuzhangsuanfa
+      file_path: bike/unique-user/_SUCCESS
+      poke_interval: 30
+      timeout: 2700
+-
+  dag_name: bike-share-anaylze-in-order
+  concurrency: 10
+  max_active_runs: 1
+  email: test@gmail.com
+  template: spark-jobs.py.j2
+  schedule_interval: "@daily"
+  start_date: 2014-01-14 00:00:00 +00:00
+  list_of_dataprocs:
+    - id: 1
+      master_machine_type: n1-standard-2
+      worker_machine_type: n1-standard-2
+      num_workers: 2
+      creation_operator_name: dataproc_create_cluster_1
+      deletion_operator_name: dataproc_destroy_cluster_1
+      creation_up_streams: [unique_user_sensor]
+    - id: 2
+      master_machine_type: n1-standard-2
+      worker_machine_type: n1-standard-2
+      num_workers: 2
+      creation_operator_name: dataproc_create_cluster_2
+      deletion_operator_name: dataproc_destroy_cluster_2
+      creation_up_streams: [dataproc_destroy_cluster_1]
+    - id: 3
+      master_machine_type: n1-standard-2
+      worker_machine_type: n1-standard-2
+      num_workers: 2
+      s3_access_enabled: true
+      yarn_dominant_resource_calculator: true
+      creation_operator_name: dataproc_create_cluster_3
+      deletion_operator_name: dataproc_destroy_cluster_3
+      creation_up_streams: [dataproc_destroy_cluster_2]
+    - id: 4
+      master_machine_type: n1-standard-2
+      worker_machine_type: n1-standard-2
+      num_workers: 2
+      creation_operator_name: dataproc_create_cluster_4
+      deletion_operator_name: dataproc_destroy_cluster_4
+      creation_up_streams: [dataproc_destroy_cluster_3]
+  list_of_jobs:
+    - name: unique_user
+      timeout: timedelta(minutes=180)
+      main_class: com.cohort.process.UserProcess
+      jar: gs://jiuzhangsuanfa/jar/CohortProject-assembly-0.1.jar
+      dataproc_id: 1
+      args: |
+        ["--process.date", "{{ (execution_date).strftime('%Y-%m-%d') }}"]
+      up_streams: [dataproc_create_cluster_1]
+      down_streams: [bike_share_aggregator]
+    - name: bike_share_aggregator
+      timeout: timedelta(minutes=120)
+      main_class: com.cohort.process.BikeShareProcess
+      jar: gs://jiuzhangsuanfa/jar/CohortProject-assembly-0.1.jar
+      dataproc_id: 1
+      args: |
+        ["--process.date", "{{ (execution_date).strftime('%Y-%m-%d') }}"]
+      down_streams: [dataproc_destroy_cluster_1]
+    - name: bike_share_retention_d1
+      timeout: timedelta(minutes=180)
+      dataproc_id: 2
+      main_class: com.cohort.process.RetentionProcess
+      jar: gs://jiuzhangsuanfa/jar/CohortProject-assembly-0.1.jar
+      args: |
+        ["--process.date", "{{ (execution_date).strftime('%Y-%m-%d') }}",
+         "--day.ago", "1"]
+      up_streams: [dataproc_create_cluster_2]
+      down_streams: [dataproc_destroy_cluster_2]
+    - name: bike_share_retention_d3
+      timeout: timedelta(minutes=180)
+      dataproc_id: 3
+      main_class: com.cohort.process.RetentionProcess
+      jar: gs://jiuzhangsuanfa/jar/CohortProject-assembly-0.1.jar
+      args: |
+        ["--process.date", "{{ (execution_date).strftime('%Y-%m-%d') }}",
+         "--day.ago", "3"]
+      up_streams: [dataproc_create_cluster_3]
+      down_streams: [dataproc_destroy_cluster_3]
+    - name: bike_share_retention_d7
+      timeout: timedelta(minutes=180)
+      dataproc_id: 4
+      main_class: com.cohort.process.RetentionProcess
+      jar: gs://jiuzhangsuanfa/jar/CohortProject-assembly-0.1.jar
+      args: |
+        ["--process.date", "{{ (execution_date).strftime('%Y-%m-%d') }}",
+         "--day.ago", "7"]
+      up_streams: [dataproc_create_cluster_4]
+      down_streams: [dataproc_destroy_cluster_4]
+  list_of_gcs_sensors:
+    - name: unique_user_sensor
+      bucket: jiuzhangsuanfa
+      file_path: bike/unique-user/_SUCCESS
+      poke_interval: 30
+      timeout: 2700
